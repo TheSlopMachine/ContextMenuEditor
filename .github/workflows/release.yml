@@ -1,7 +1,9 @@
 # Release build. Triggered by pushing a version tag (e.g. v1.2.0), AFTER the
 # workflow has been pushed - a tag in the same push as a new workflow is
 # skipped by GitHub. Builds Windows exes for x64, x86 and arm64 (cross-compiled
-# on Linux) and attaches per-arch zips plus SHA256 checksums to the release.
+# on Linux). Build jobs only upload artifacts; the release (and its notes,
+# written exactly once) is published by the final job after every arch build
+# succeeded.
 
 name: Release
 
@@ -11,13 +13,13 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   NAME: ContextMenuEditor
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -66,13 +68,39 @@ jobs:
           cp README.md "$ARTIFACT/"
           zip -r "$ARTIFACT.zip" "$ARTIFACT"
           sha256sum "$ARTIFACT.zip" > "SHA256SUMS-$ARCH.txt"
+          mkdir dist
+          cp "$ARTIFACT.zip" "SHA256SUMS-$ARCH.txt" dist/
         env:
           ARCH: ${{ matrix.name }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}-${{ matrix.name }}
+          path: dist
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: "${{ env.NAME }}-*"
+          merge-multiple: true
+
+      - name: Verify artifact set
+        run: |
+          test "$(ls dist/*.zip | wc -l)" -eq 3
+          test "$(ls dist/SHA256SUMS-*.txt | wc -l)" -eq 3
 
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            ${{ env.NAME }}-*.zip
-            SHA256SUMS-*.txt
+            dist/*.zip
+            dist/SHA256SUMS-*.txt
           generate_release_notes: true
