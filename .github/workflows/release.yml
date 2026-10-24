@@ -1,6 +1,7 @@
-# Release build. Triggered by pushing a version tag (e.g. v1.2.0).
-# Cross-compiles the Windows exe with MinGW-w64 on a Linux runner and
-# attaches the zipped exe plus a SHA256 checksum to the tag's release.
+# Release build. Triggered by pushing a version tag (e.g. v1.2.0), AFTER the
+# workflow has been pushed - a tag in the same push as a new workflow is
+# skipped by GitHub. Builds Windows exes for x64, x86 and arm64 (cross-compiled
+# on Linux) and attaches per-arch zips plus SHA256 checksums to the release.
 
 name: Release
 
@@ -17,32 +18,59 @@ env:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: win64
+            cross: x86_64-w64-mingw32-
+            apt: gcc-mingw-w64-x86-64
+          - name: win32
+            cross: i686-w64-mingw32-
+            apt: gcc-mingw-w64-i686
+          - name: arm64
+            cross: aarch64-w64-mingw32-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
       - name: Install MinGW-w64 cross toolchain
+        if: matrix.name != 'arm64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64
+          sudo apt-get install -y ${{ matrix.apt }}
+
+      # Native Windows ARM64 toolchain (clang-based). Version pinned to a
+      # published llvm-mingw release; the tarball is sha256-checked in place.
+      - name: Install llvm-mingw cross toolchain
+        if: matrix.name == 'arm64'
+        run: |
+          curl -sSL -o /tmp/llvm-mingw.tar.xz \
+            https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-ubuntu-22.04-x86_64.tar.xz
+          echo '55064b60b991a1e1e8090b8c2f84e82b22cfe5903d12c159d65064cf5e8ae335  /tmp/llvm-mingw.tar.xz' | sha256sum -c -
+          sudo tar -xJf /tmp/llvm-mingw.tar.xz -C /opt
+          echo '/opt/llvm-mingw-20261020-ucrt-ubuntu-22.04-x86_64/bin' >> "$GITHUB_PATH"
 
       - name: Build
-        run: make build CROSS=x86_64-w64-mingw32-
+        run: make build CROSS=${{ matrix.cross }}
 
       - name: Package
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          mkdir "$NAME-$VERSION"
-          cp "build/$NAME.exe" "$NAME-$VERSION/"
-          cp README.md "$NAME-$VERSION/"
-          zip -r "$NAME-$VERSION.zip" "$NAME-$VERSION"
-          sha256sum "$NAME-$VERSION.zip" > SHA256SUMS.txt
+          ARTIFACT="$NAME-$VERSION-$ARCH"
+          mkdir "$ARTIFACT"
+          cp "build/$NAME.exe" "$ARTIFACT/"
+          cp README.md "$ARTIFACT/"
+          zip -r "$ARTIFACT.zip" "$ARTIFACT"
+          sha256sum "$ARTIFACT.zip" > "SHA256SUMS-$ARCH.txt"
+        env:
+          ARCH: ${{ matrix.name }}
 
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ env.NAME }}-*.zip
-            SHA256SUMS.txt
+            SHA256SUMS-*.txt
           generate_release_notes: true
