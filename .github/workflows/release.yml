@@ -1,0 +1,48 @@
+# Release build. Triggered by pushing a version tag (e.g. v1.2.0).
+# Cross-compiles the Windows exe with MinGW-w64 on a Linux runner and
+# attaches the zipped exe plus a SHA256 checksum to the tag's release.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  NAME: ContextMenuEditor
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install MinGW-w64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Build
+        run: make build CROSS=x86_64-w64-mingw32-
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir "$NAME-$VERSION"
+          cp "build/$NAME.exe" "$NAME-$VERSION/"
+          cp README.md "$NAME-$VERSION/"
+          zip -r "$NAME-$VERSION.zip" "$NAME-$VERSION"
+          sha256sum "$NAME-$VERSION.zip" > SHA256SUMS.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            ${{ env.NAME }}-*.zip
+            SHA256SUMS.txt
+          generate_release_notes: true
