@@ -22,7 +22,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform:
+        # "include" entries are flattened into the matrix context, so the step
+        # conditions and run commands below can use matrix.* directly.
+        include:
           - name: win64
             cross: x86_64-w64-mingw32-
             apt: gcc-mingw-w64-x86-64
